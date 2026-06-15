@@ -1,0 +1,11 @@
+[phases.install]
+cmds = [
+  "pnpm install --frozen-lockfile",
+  "PLAYWRIGHT_BROWSERS_PATH=/app/.playwright-browsers pnpm exec playwright install --with-deps chromium"
+]
+
+[phases.build]
+cmds = ["pnpm run build"]
+
+[start]
+cmd = "pnpm start"

@@ -62,6 +62,7 @@ export async function POST(request: NextRequest) {
         { status: 422 },
       );
     }
+    console.error("[resolver] unexpected error:", err);
     return NextResponse.json(
       { error: "Resolver failed. Please try again." },
       { status: 500 },
