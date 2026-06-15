@@ -3,6 +3,13 @@
 packages:
   - '.'
 
+# pnpm 11 blocks dependency postinstall (build) scripts by default. sharp (used
+# by Next.js image optimization) and unrs-resolver (eslint resolver) need their
+# native-binary build scripts to run, so approve just those two.
+allowBuilds:
+  sharp: true
+  unrs-resolver: true
+
 # The Railway build installs a newer pnpm whose supply-chain policy rejects any
 # dependency published within the last 24h (minimumReleaseAge gate). playwright
 # and playwright-core 1.61.0 are brand-new official Microsoft packages — and
@@ -11,10 +18,3 @@ packages:
 minimumReleaseAgeExclude:
   - playwright
   - playwright-core
-
-# pnpm 10 blocks dependency postinstall (build) scripts by default. sharp (used
-# by Next.js image optimization) and unrs-resolver (eslint resolver) need their
-# native-binary build scripts to run, so approve just those two.
-onlyBuiltDependencies:
-  - sharp
-  - unrs-resolver
