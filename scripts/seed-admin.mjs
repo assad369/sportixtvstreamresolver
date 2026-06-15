@@ -1,6 +1,6 @@
 // Seeds (or updates) the admin user from env. Run with:
 //   pnpm seed   (→ node --env-file=.env.local scripts/seed-admin.mjs)
-// Uses the native mongodb driver + bcryptjs so it needs no TS/Next runtime.
+// Uses the native mongodb driver + bcryptjs so it needs no TS/Next runtime
 
 import { MongoClient } from "mongodb";
 import bcrypt from "bcryptjs";
