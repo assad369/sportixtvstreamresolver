@@ -244,6 +244,18 @@ function StreamCard({
       <div className="mt-4 flex flex-col gap-3">
         <CopyField label="Embed URL" value={embedUrl} />
         <CopyField label="Iframe code" value={iframeSnippet} mono />
+        {stream.lastM3u8Url ? (
+          <CopyField label="M3U8 URL" value={stream.lastM3u8Url} mono />
+        ) : (
+          <div>
+            <label className="mb-1 block text-xs font-medium text-white/40">
+              M3U8 URL
+            </label>
+            <p className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/40">
+              Not resolved yet
+            </p>
+          </div>
+        )}
       </div>
 
       {showPreview && stream.enabled && (
