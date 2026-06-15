@@ -1,4 +1,7 @@
-FROM node:20-slim
+# Official Playwright image: Chromium + all required system libraries are baked
+# in at /ms-playwright, at the browser revision matching playwright 1.61.x.
+# Tag MUST track the "playwright" version in package.json.
+FROM mcr.microsoft.com/playwright:v1.61.0-noble
 
 WORKDIR /app
 
@@ -7,12 +10,13 @@ RUN npm install -g pnpm
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
-# Install Chromium and its system dependencies (needs apt-get, available on Debian slim)
-RUN pnpm exec playwright install --with-deps chromium
+# Ensure the Chromium revision our library expects is present (fast no-op when
+# the base image already has it). No --with-deps: system libs are in the image.
+RUN pnpm exec playwright install chromium
 
 COPY . .
 RUN pnpm build
 
-EXPOSE 3000
 ENV NODE_ENV=production
+EXPOSE 3000
 CMD ["pnpm", "start"]
