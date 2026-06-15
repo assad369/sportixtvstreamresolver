@@ -1,3 +1,8 @@
+# Single-package repo: declaring the root keeps pnpm happy treating this file as
+# a workspace (pnpm requires a non-empty "packages" field once this file exists).
+packages:
+  - '.'
+
 # The Railway build installs a newer pnpm whose supply-chain policy rejects any
 # dependency published within the last 24h (minimumReleaseAge gate). playwright
 # and playwright-core 1.61.0 are brand-new official Microsoft packages — and
