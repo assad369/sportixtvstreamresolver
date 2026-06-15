@@ -1,0 +1,8 @@
+# The Railway build installs a newer pnpm whose supply-chain policy rejects any
+# dependency published within the last 24h (minimumReleaseAge gate). playwright
+# and playwright-core 1.61.0 are brand-new official Microsoft packages — and
+# match the mcr.microsoft.com/playwright base image — so exempt just those two
+# from the gate while leaving it active for every other dependency.
+minimumReleaseAgeExclude:
+  - playwright
+  - playwright-core
