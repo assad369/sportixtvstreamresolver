@@ -3,7 +3,7 @@ import { MongoDBAdapter } from "@auth/mongodb-adapter";
 import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
-import clientPromise from "@/lib/mongodb";
+import getMongoClient from "@/lib/mongodb";
 import { authConfig } from "./auth.config";
 import connectDB from "@/lib/db";
 import { User } from "@/models/User";
@@ -15,7 +15,7 @@ const credentialsSchema = z.object({
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
-  adapter: MongoDBAdapter(clientPromise, {
+  adapter: MongoDBAdapter(getMongoClient, {
     databaseName: process.env.MONGODB_DB ?? "sportix",
   }),
   session: { strategy: "jwt" },
