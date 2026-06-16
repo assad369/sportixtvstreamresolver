@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getStreamHeaders } from "@/lib/streamService";
-import { curlFetch } from "@/lib/originFetch";
+import { curlStream } from "@/lib/originFetch";
 import { withCors, corsPreflight } from "@/lib/cors";
 
 export const dynamic = "force-dynamic";
@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
 
   let result;
   try {
-    result = await curlFetch(segmentUrl, headers, { range });
+    result = await curlStream(segmentUrl, headers, { range });
   } catch {
     return NextResponse.json(
       { error: "Segment fetch failed." },
@@ -54,14 +54,25 @@ export async function GET(request: NextRequest) {
   // Always serve as MPEG-TS. These origins deliberately mislabel segments
   // (e.g. TikTok CDN returns `image/png` for TS bytes); HLS.js parses the raw
   // bytes and ignores Content-Type, so a stable video/mp2t is the safe choice.
-  const contentType = "video/mp2t";
+  const responseHeaders: Record<string, string> = {
+    "Content-Type": "video/mp2t",
+    "Cache-Control": "no-store",
+  };
+  // Forward length/range from origin when known. We stream the body through
+  // rather than buffering it, so Content-Length is only set when the origin
+  // advertised it; otherwise the response is chunked, which HLS.js handles.
+  if (result.contentLength) {
+    responseHeaders["Content-Length"] = result.contentLength;
+  }
+  if (result.status === 206) {
+    if (result.contentRange) {
+      responseHeaders["Content-Range"] = result.contentRange;
+    }
+    responseHeaders["Accept-Ranges"] = result.acceptRanges ?? "bytes";
+  }
 
-  return new NextResponse(new Uint8Array(result.body), {
+  return new NextResponse(result.stream, {
     status: result.status,
-    headers: withCors({
-      "Content-Type": contentType,
-      "Cache-Control": "no-store",
-      "Content-Length": String(result.body.length),
-    }),
+    headers: withCors(responseHeaders),
   });
 }

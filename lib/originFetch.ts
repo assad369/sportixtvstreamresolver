@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { Readable } from "node:stream";
 import type { StreamHeaders } from "@/types/stream";
 
 /**
@@ -57,6 +58,114 @@ export function curlFetch(
       const contentType =
         ctMatch && ctMatch[1] && ctMatch[1] !== "(null)" ? ctMatch[1] : null;
       resolve({ status, body: Buffer.concat(out), contentType });
+    });
+  });
+}
+
+export interface CurlStreamResult {
+  status: number;
+  /** Origin Content-Length, if advertised (absent for chunked responses). */
+  contentLength: string | null;
+  /** Origin Content-Range, for 206 byte-range responses. */
+  contentRange: string | null;
+  /** Origin Accept-Ranges, for 206 byte-range responses. */
+  acceptRanges: string | null;
+  /** Web stream of the body bytes — piped from curl's stdout, never buffered. */
+  stream: ReadableStream<Uint8Array>;
+}
+
+/**
+ * Like {@link curlFetch} but streams the body straight through instead of
+ * buffering it. We dump the response headers to stderr with `-D /dev/stderr`,
+ * resolve as soon as the status line + headers arrive, and hand back curl's
+ * stdout as a web ReadableStream. This pipelines the two hops (origin→server
+ * and server→player) so the player's time-to-first-byte is the origin's TTFB,
+ * not the full segment download time — the key fix for proxied-stream buffering.
+ *
+ * Use this for segment bytes. Playlists still use the buffered curlFetch because
+ * their URIs must be rewritten before serving.
+ */
+export function curlStream(
+  url: string,
+  headers: StreamHeaders,
+  opts: { range?: string } = {},
+): Promise<CurlStreamResult> {
+  return new Promise((resolve, reject) => {
+    const args = [
+      "-sS",
+      "--tcp-nodelay",
+      "--connect-timeout",
+      "8",
+      // Response headers (status line + Content-Length/Range) → stderr, so they
+      // arrive before the body and never contaminate the binary stdout stream.
+      "-D",
+      "/dev/stderr",
+      "-o",
+      "-", // body → stdout
+      "-H",
+      `Referer: ${headers.referer}`,
+      "-H",
+      `Origin: ${headers.origin}`,
+      "-H",
+      `User-Agent: ${headers.userAgent}`,
+      "-H",
+      "Accept: */*",
+    ];
+    if (opts.range) args.push("-H", `Range: ${opts.range}`);
+    args.push(url);
+
+    const child = spawn("curl", args);
+    let headerBuf = "";
+    let settled = false;
+
+    child.on("error", (e: Error) => {
+      if (settled) return;
+      settled = true;
+      reject(e); // e.g. curl not installed (ENOENT)
+    });
+
+    child.stderr.on("data", (d: Buffer) => {
+      if (settled) return;
+      headerBuf += d.toString("utf8");
+      // The header block ends at the first blank line. Wait for it so we have
+      // the full status + headers before resolving.
+      const end = headerBuf.search(/\r?\n\r?\n/);
+      if (end === -1) return;
+
+      const lines = headerBuf.slice(0, end).split(/\r?\n/);
+      const statusMatch = (lines[0] ?? "").match(/HTTP\/[\d.]+\s+(\d{3})/);
+      const status = statusMatch ? Number(statusMatch[1]) : 0;
+      const header = (name: string): string | null => {
+        const re = new RegExp(`^${name}:\\s*(.+)$`, "i");
+        for (const line of lines.slice(1)) {
+          const m = line.match(re);
+          if (m && m[1]) return m[1].trim();
+        }
+        return null;
+      };
+
+      settled = true;
+      child.stderr.removeAllListeners("data");
+      resolve({
+        status,
+        contentLength: header("Content-Length"),
+        contentRange: header("Content-Range"),
+        acceptRanges: header("Accept-Ranges"),
+        stream: Readable.toWeb(
+          child.stdout,
+        ) as unknown as ReadableStream<Uint8Array>,
+      });
+    });
+
+    // curl exited before any response headers — connection failure, DNS, etc.
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      reject(
+        new Error(
+          `curl exited (${code}) before response headers: ${headerBuf.trim()}`,
+        ),
+      );
     });
   });
 }
