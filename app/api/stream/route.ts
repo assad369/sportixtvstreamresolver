@@ -56,7 +56,18 @@ export async function GET(request: NextRequest) {
   // bytes and ignores Content-Type, so a stable video/mp2t is the safe choice.
   const responseHeaders: Record<string, string> = {
     "Content-Type": "video/mp2t",
-    "Cache-Control": "no-store",
+    // A published HLS segment is immutable, so the bytes for a given segment URL
+    // never change. We let a CDN (Cloudflare) cache full segments at the edge so
+    // concurrent viewers of the same stream are served from cache instead of
+    // re-proxying every byte through the origin — this is the main bandwidth
+    // saving. `max-age=0` keeps browsers honest while `s-maxage` drives the edge
+    // TTL; `stale-while-revalidate` smooths over the resolution refresh window.
+    // Range (206) responses are left uncached — partial-content caching is
+    // fiddly and full-segment GETs are the common, high-volume path.
+    "Cache-Control":
+      result.status === 206
+        ? "no-store"
+        : "public, max-age=0, s-maxage=60, stale-while-revalidate=30",
   };
   // Forward length/range from origin when known. We stream the body through
   // rather than buffering it, so Content-Length is only set when the origin

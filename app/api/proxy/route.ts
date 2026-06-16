@@ -93,7 +93,11 @@ export async function GET(request: NextRequest) {
     status: 200,
     headers: withCors({
       "Content-Type": "application/vnd.apple.mpegurl",
-      "Cache-Control": "no-store",
+      // Live playlists advance every few seconds, so they must stay fresh — but
+      // a 1s edge TTL lets the CDN collapse the burst of near-simultaneous
+      // requests from many concurrent viewers into a single origin hit, with
+      // negligible staleness. Do NOT raise this for live streams.
+      "Cache-Control": "public, max-age=0, s-maxage=1",
     }),
   });
 }
