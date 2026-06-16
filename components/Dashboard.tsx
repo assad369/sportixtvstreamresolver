@@ -169,6 +169,10 @@ function StreamCard({
 
   const embedUrl = `${origin}/embed/${stream.publicId}`;
   const iframeSnippet = `<iframe src="${embedUrl}" allowfullscreen frameborder="0" width="640" height="360"></iframe>`;
+  // The raw origin m3u8 is unplayable from a client (forbidden Referer header +
+  // WAF blocks on TLS fingerprint). The proxy endpoint replays the captured
+  // headers via curl and rewrites segment URLs, so it's the playable m3u8 URL.
+  const m3u8Url = `${origin}/api/proxy?id=${stream.publicId}`;
 
   async function toggleEnabled() {
     setBusy(true);
@@ -245,7 +249,7 @@ function StreamCard({
         <CopyField label="Embed URL" value={embedUrl} />
         <CopyField label="Iframe code" value={iframeSnippet} mono />
         {stream.lastM3u8Url ? (
-          <CopyField label="M3U8 URL" value={stream.lastM3u8Url} mono />
+          <CopyField label="M3U8 URL" value={m3u8Url} mono />
         ) : (
           <div>
             <label className="mb-1 block text-xs font-medium text-white/40">
