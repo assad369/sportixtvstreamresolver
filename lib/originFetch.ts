@@ -76,11 +76,16 @@ export interface CurlStreamResult {
 
 /**
  * Like {@link curlFetch} but streams the body straight through instead of
- * buffering it. We dump the response headers to stderr with `-D /dev/stderr`,
- * resolve as soon as the status line + headers arrive, and hand back curl's
- * stdout as a web ReadableStream. This pipelines the two hops (origin→server
- * and server→player) so the player's time-to-first-byte is the origin's TTFB,
- * not the full segment download time — the key fix for proxied-stream buffering.
+ * buffering it. We ask curl to include the response headers inline at the front
+ * of stdout (`-i`), parse the header block off the stream prefix, push the
+ * remaining body bytes back, and hand back curl's stdout as a web ReadableStream.
+ * This pipelines the two hops (origin→server and server→player) so the player's
+ * time-to-first-byte is the origin's TTFB, not the full segment download time —
+ * the key fix for proxied-stream buffering.
+ *
+ * `-i` is used instead of `-D /dev/stderr` because the latter makes curl *open*
+ * that path for writing, which fails in some containers (e.g. Railway) and 502s
+ * every segment.
  *
  * Use this for segment bytes. Playlists still use the buffered curlFetch because
  * their URIs must be rewritten before serving.
@@ -96,12 +101,7 @@ export function curlStream(
       "--tcp-nodelay",
       "--connect-timeout",
       "8",
-      // Response headers (status line + Content-Length/Range) → stderr, so they
-      // arrive before the body and never contaminate the binary stdout stream.
-      "-D",
-      "/dev/stderr",
-      "-o",
-      "-", // body → stdout
+      "-i", // include response headers at the front of stdout
       "-H",
       `Referer: ${headers.referer}`,
       "-H",
@@ -115,7 +115,8 @@ export function curlStream(
     args.push(url);
 
     const child = spawn("curl", args);
-    let headerBuf = "";
+    let head: Buffer = Buffer.alloc(0);
+    let err = "";
     let settled = false;
 
     child.on("error", (e: Error) => {
@@ -124,15 +125,25 @@ export function curlStream(
       reject(e); // e.g. curl not installed (ENOENT)
     });
 
-    child.stderr.on("data", (d: Buffer) => {
-      if (settled) return;
-      headerBuf += d.toString("utf8");
-      // The header block ends at the first blank line. Wait for it so we have
-      // the full status + headers before resolving.
-      const end = headerBuf.search(/\r?\n\r?\n/);
-      if (end === -1) return;
+    child.stderr.on("data", (d: Buffer) => (err += d.toString("utf8")));
 
-      const lines = headerBuf.slice(0, end).split(/\r?\n/);
+    const onData = (chunk: Buffer) => {
+      if (settled) return;
+      head = head.length === 0 ? chunk : Buffer.concat([head, chunk]);
+
+      // The header block ends at the first blank line. Buffer stdout until we
+      // see it, then everything after the boundary is body.
+      let boundary = head.indexOf("\r\n\r\n");
+      let sepLen = 4;
+      if (boundary === -1) {
+        boundary = head.indexOf("\n\n");
+        sepLen = 2;
+      }
+      if (boundary === -1) return; // header block not complete yet
+
+      const lines = head.subarray(0, boundary).toString("utf8").split(/\r?\n/);
+      const leftover = head.subarray(boundary + sepLen);
+
       const statusMatch = (lines[0] ?? "").match(/HTTP\/[\d.]+\s+(\d{3})/);
       const status = statusMatch ? Number(statusMatch[1]) : 0;
       const header = (name: string): string | null => {
@@ -145,7 +156,11 @@ export function curlStream(
       };
 
       settled = true;
-      child.stderr.removeAllListeners("data");
+      child.stdout.removeListener("data", onData);
+      // Push the body bytes already read back onto the stream so toWeb emits
+      // them first, then the rest of stdout — backpressure preserved.
+      if (leftover.length > 0) child.stdout.unshift(leftover);
+
       resolve({
         status,
         contentLength: header("Content-Length"),
@@ -155,15 +170,16 @@ export function curlStream(
           child.stdout,
         ) as unknown as ReadableStream<Uint8Array>,
       });
-    });
+    };
+    child.stdout.on("data", onData);
 
-    // curl exited before any response headers — connection failure, DNS, etc.
+    // curl exited before a full header block — connection failure, DNS, etc.
     child.on("close", (code) => {
       if (settled) return;
       settled = true;
       reject(
         new Error(
-          `curl exited (${code}) before response headers: ${headerBuf.trim()}`,
+          `curl exited (${code}) before response headers: ${err.trim()}`,
         ),
       );
     });
