@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getStreamHeaders } from "@/lib/streamService";
 import { curlStream } from "@/lib/originFetch";
+import { getCachedSegment } from "@/lib/segmentCache";
 import { withCors, corsPreflight } from "@/lib/cors";
 
 export const dynamic = "force-dynamic";
@@ -32,6 +33,24 @@ export async function GET(request: NextRequest) {
 
   const segmentUrl = decodeURIComponent(seg);
   const range = request.headers.get("range") ?? undefined;
+
+  // Range requests (seeking) skip the whole-segment warm cache and always
+  // take the cold path below — they're rare in live HLS and the cache only
+  // stores complete bodies.
+  if (!range) {
+    const cached = getCachedSegment(segmentUrl);
+    if (cached) {
+      return new NextResponse(new Uint8Array(cached.body), {
+        status: cached.status,
+        headers: withCors({
+          "Content-Type": "video/mp2t",
+          "Content-Length": String(cached.body.length),
+          "Cache-Control":
+            "public, max-age=0, s-maxage=60, stale-while-revalidate=30",
+        }),
+      });
+    }
+  }
 
   let result;
   try {

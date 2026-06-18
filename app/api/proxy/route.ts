@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse, type NextRequest, after } from "next/server";
 import {
   getPlayableStream,
   refreshStream,
@@ -7,11 +7,19 @@ import {
 } from "@/lib/streamService";
 import { emitStatus } from "@/lib/sse";
 import { fetchPlaylist, rewritePlaylist, TokenExpiredError } from "@/lib/proxy";
+import { prefetchSegment } from "@/lib/segmentCache";
 import { withCors, corsPreflight } from "@/lib/cors";
 import type { PlayableStream } from "@/types/stream";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+// Segments withheld from the live edge of the served playlist, giving
+// background prefetch a head start so players never hit a cold origin fetch.
+// 0 disables holdback while leaving prefetch on (useful for isolating impact).
+const HOLDBACK_SEGMENT_COUNT = Number(
+  process.env.HOLDBACK_SEGMENT_COUNT ?? "1",
+);
 
 export function OPTIONS() {
   return corsPreflight();
@@ -87,7 +95,22 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  const rewritten = rewritePlaylist(body, baseUrl, publicId);
+  const { body: rewritten, segmentUris, isMaster, isVod } = rewritePlaylist(
+    body,
+    baseUrl,
+    publicId,
+    { holdbackCount: HOLDBACK_SEGMENT_COUNT },
+  );
+
+  if (!isMaster && !isVod && segmentUris.length > 0) {
+    // Capture headers now (post any token refresh above) and warm the
+    // segment cache after the response is sent, so players never pay
+    // cold origin latency for segments that are about to enter the window.
+    const headersForPrefetch = stream.headers;
+    after(() => {
+      for (const uri of segmentUris) prefetchSegment(uri, headersForPrefetch);
+    });
+  }
 
   return new NextResponse(rewritten, {
     status: 200,
